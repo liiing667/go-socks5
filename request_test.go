@@ -98,6 +98,92 @@ func TestRequest_Connect(t *testing.T) {
 	}
 }
 
+func TestNewRequest_BadVersion(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{4, 1, 0, 1, 127, 0, 0, 1, 0, 80})
+
+	if _, err := NewRequest(buf); err == nil {
+		t.Fatal("expected error for bad version")
+	}
+}
+
+func TestNewRequest_Truncated(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{5, 1})
+
+	if _, err := NewRequest(buf); err == nil {
+		t.Fatal("expected error for truncated header")
+	}
+}
+
+func TestReadAddrSpec_IPv6(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{4})
+	buf.Write(net.ParseIP("::1").To16())
+	buf.Write([]byte{0, 80})
+
+	spec, err := readAddrSpec(buf)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !spec.IP.Equal(net.ParseIP("::1")) || spec.Port != 80 {
+		t.Fatalf("bad: %v", spec)
+	}
+}
+
+func TestReadAddrSpec_FQDN_ShortReads(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{3, 11})
+	buf.WriteString("example.com")
+	buf.Write([]byte{0, 80})
+
+	// Deliver one byte at a time to simulate a slow connection
+	spec, err := readAddrSpec(&chunkedReader{r: buf, chunkSize: 1})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if spec.FQDN != "example.com" || spec.Port != 80 {
+		t.Fatalf("bad: %v", spec)
+	}
+}
+
+func TestReadAddrSpec_UnknownType(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{9, 0, 0, 0, 0, 0, 0})
+
+	if _, err := readAddrSpec(buf); err != unrecognizedAddrType {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestReadAddrSpec_EmptyFQDN(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{3, 0, 0, 80})
+
+	if _, err := readAddrSpec(buf); err == nil {
+		t.Fatal("expected error for empty FQDN")
+	}
+}
+
+func TestReadAddrSpec_TruncatedFQDN(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{3, 11})
+	buf.WriteString("example")
+
+	if _, err := readAddrSpec(buf); err == nil {
+		t.Fatal("expected error for truncated FQDN")
+	}
+}
+
+func TestReadAddrSpec_TruncatedIPv4(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	buf.Write([]byte{1, 127, 0})
+
+	if _, err := readAddrSpec(buf); err == nil {
+		t.Fatal("expected error for truncated IPv4 address")
+	}
+}
+
 func TestRequest_Connect_RuleFail(t *testing.T) {
 	// Create a local listener
 	l, err := net.Listen("tcp", "127.0.0.1:0")

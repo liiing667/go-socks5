@@ -90,7 +90,7 @@ type conn interface {
 func NewRequest(bufConn io.Reader) (*Request, error) {
 	// Read the version byte
 	header := []byte{0, 0, 0}
-	if _, err := io.ReadAtLeast(bufConn, header, 3); err != nil {
+	if _, err := io.ReadFull(bufConn, header); err != nil {
 		return nil, fmt.Errorf("Failed to get command version: %v", err)
 	}
 
@@ -258,7 +258,7 @@ func readAddrSpec(r io.Reader) (*AddrSpec, error) {
 
 	// Get the address type
 	addrType := []byte{0}
-	if _, err := r.Read(addrType); err != nil {
+	if _, err := io.ReadFull(r, addrType); err != nil {
 		return nil, err
 	}
 
@@ -266,25 +266,28 @@ func readAddrSpec(r io.Reader) (*AddrSpec, error) {
 	switch addrType[0] {
 	case ipv4Address:
 		addr := make([]byte, 4)
-		if _, err := io.ReadAtLeast(r, addr, len(addr)); err != nil {
+		if _, err := io.ReadFull(r, addr); err != nil {
 			return nil, err
 		}
 		d.IP = net.IP(addr)
 
 	case ipv6Address:
 		addr := make([]byte, 16)
-		if _, err := io.ReadAtLeast(r, addr, len(addr)); err != nil {
+		if _, err := io.ReadFull(r, addr); err != nil {
 			return nil, err
 		}
 		d.IP = net.IP(addr)
 
 	case fqdnAddress:
-		if _, err := r.Read(addrType); err != nil {
+		if _, err := io.ReadFull(r, addrType); err != nil {
 			return nil, err
 		}
 		addrLen := int(addrType[0])
+		if addrLen == 0 {
+			return nil, fmt.Errorf("Empty FQDN")
+		}
 		fqdn := make([]byte, addrLen)
-		if _, err := io.ReadAtLeast(r, fqdn, addrLen); err != nil {
+		if _, err := io.ReadFull(r, fqdn); err != nil {
 			return nil, err
 		}
 		d.FQDN = string(fqdn)
@@ -295,7 +298,7 @@ func readAddrSpec(r io.Reader) (*AddrSpec, error) {
 
 	// Read the port
 	port := []byte{0, 0}
-	if _, err := io.ReadAtLeast(r, port, 2); err != nil {
+	if _, err := io.ReadFull(r, port); err != nil {
 		return nil, err
 	}
 	d.Port = (int(port[0]) << 8) | int(port[1])

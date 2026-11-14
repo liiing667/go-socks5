@@ -14,6 +14,10 @@ const (
 	authFailure     = uint8(1)
 )
 
+// gssAPIAuth is the GSSAPI authentication method. It is a recognized
+// method, but this server provides no implementation for it.
+const gssAPIAuth = uint8(1)
+
 var (
 	UserAuthFailed  = fmt.Errorf("User authentication failed")
 	NoSupportedAuth = fmt.Errorf("No supported authentication mechanism")
@@ -65,7 +69,7 @@ func (a UserPassAuthenticator) Authenticate(reader io.Reader, writer io.Writer) 
 
 	// Get the version and username length
 	header := []byte{0, 0}
-	if _, err := io.ReadAtLeast(reader, header, 2); err != nil {
+	if _, err := io.ReadFull(reader, header); err != nil {
 		return nil, err
 	}
 
@@ -76,20 +80,26 @@ func (a UserPassAuthenticator) Authenticate(reader io.Reader, writer io.Writer) 
 
 	// Get the user name
 	userLen := int(header[1])
+	if userLen == 0 {
+		return nil, fmt.Errorf("Empty username")
+	}
 	user := make([]byte, userLen)
-	if _, err := io.ReadAtLeast(reader, user, userLen); err != nil {
+	if _, err := io.ReadFull(reader, user); err != nil {
 		return nil, err
 	}
 
 	// Get the password length
-	if _, err := reader.Read(header[:1]); err != nil {
+	if _, err := io.ReadFull(reader, header[:1]); err != nil {
 		return nil, err
 	}
 
 	// Get the password
 	passLen := int(header[0])
+	if passLen == 0 {
+		return nil, fmt.Errorf("Empty password")
+	}
 	pass := make([]byte, passLen)
-	if _, err := io.ReadAtLeast(reader, pass, passLen); err != nil {
+	if _, err := io.ReadFull(reader, pass); err != nil {
 		return nil, err
 	}
 
@@ -140,12 +150,33 @@ func noAcceptableAuth(conn io.Writer) error {
 // and proceeding auth methods
 func readMethods(r io.Reader) ([]byte, error) {
 	header := []byte{0}
-	if _, err := r.Read(header); err != nil {
+	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, err
 	}
 
 	numMethods := int(header[0])
+	if numMethods == 0 {
+		return nil, fmt.Errorf("No auth methods offered")
+	}
+
 	methods := make([]byte, numMethods)
-	_, err := io.ReadAtLeast(r, methods, numMethods)
-	return methods, err
+	if _, err := io.ReadFull(r, methods); err != nil {
+		return nil, err
+	}
+
+	// Ensure the offered methods are well formed
+	seen := make(map[uint8]struct{}, numMethods)
+	for _, method := range methods {
+		switch method {
+		case NoAuth, gssAPIAuth, UserPassAuth:
+		default:
+			return nil, fmt.Errorf("Unknown auth method: %v", method)
+		}
+		if _, ok := seen[method]; ok {
+			return nil, fmt.Errorf("Duplicate auth method: %v", method)
+		}
+		seen[method] = struct{}{}
+	}
+
+	return methods, nil
 }
